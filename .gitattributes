@@ -1,0 +1,8 @@
+# Git LFS tracking for large files
+# Only track the best model checkpoint
+visualize-graph-v1/best_model_state.bin filter=lfs diff=lfs merge=lfs -text
+# Exclude venv and cache
+venv/ -text
+__pycache__/ -text
+*.pyc -text
+.DS_Store -text

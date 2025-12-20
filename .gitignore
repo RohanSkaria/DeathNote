@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large data files (excluded from git - use cloud storage or DVC)
+archive-data/
+DMS_ProteinGym_substitutions/
+
+# Model checkpoints (only best_model_state.bin is tracked via Git LFS)
+# Other model files excluded
+*.pt
+*.pth
+*.ckpt
+# Note: best_model_state.bin is tracked via .gitattributes
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Visualization outputs (can regenerate)
+visualize-graph-v1/results_graph*.png
+
