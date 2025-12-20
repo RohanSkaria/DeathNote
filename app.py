@@ -135,26 +135,58 @@ def load_pipeline():
     # Initialize model
     model = SafetyClassifier(model_name, fine_tune_last_layer=True)
     
-    # Load weights (check both root and visualize-graph-v1 folder)
-    model_path = "best_model_state.bin"
-    if not os.path.exists(model_path):
-        model_path = "visualize-graph-v1/best_model_state.bin"
+    # Try to load model from multiple sources
+    model_path = None
+    best_mcc = 'N/A'
     
-    if not os.path.exists(model_path):
-        st.error(f"❌ Model file '{model_path}' not found.")
-        st.info(f"Current directory: {os.getcwd()}")
+    # Priority 1: Try local file (root or visualize-graph-v1 folder)
+    for path in ["best_model_state.bin", "visualize-graph-v1/best_model_state.bin"]:
+        if os.path.exists(path):
+            # Check if it's a valid binary file (not Git LFS pointer)
+            try:
+                with open(path, 'rb') as f:
+                    first_bytes = f.read(50)
+                    if not first_bytes.startswith(b'version https://git-lfs'):
+                        model_path = path
+                        break
+            except:
+                pass
+    
+    # Priority 2: Try downloading from Hugging Face Hub
+    if not model_path:
+        st.info("📥 Model file not found locally. Attempting to download from Hugging Face Hub...")
+        try:
+            from huggingface_hub import hf_hub_download
+            hf_model_path = hf_hub_download(
+                repo_id="RohanSkaria/protein-safety-classifier",
+                filename="best_model_state.bin",
+                cache_dir=".cache"
+            )
+            if os.path.exists(hf_model_path):
+                model_path = hf_model_path
+                st.success("✅ Model downloaded from Hugging Face Hub!")
+        except Exception as e:
+            st.warning(f"Could not download from Hugging Face: {e}")
+    
+    # Priority 3: Try to fix Git LFS pointer
+    if not model_path:
+        for path in ["best_model_state.bin", "visualize-graph-v1/best_model_state.bin"]:
+            if os.path.exists(path):
+                if ensure_model_file(path):
+                    model_path = path
+                    break
+    
+    if not model_path:
+        st.error("❌ Could not load model file.")
+        st.info("💡 **Solutions:**")
+        st.info("1. Upload model to Hugging Face Hub: `python scripts/upload_model_to_hf.py`")
+        st.info("2. Ensure Git LFS is properly configured")
+        st.info(f"3. Current directory: {os.getcwd()}")
         try:
             files = os.listdir('.')
-            st.info(f"Files in directory: {', '.join(files[:20])}")
+            st.info(f"Files available: {', '.join(files[:20])}")
         except:
             pass
-        return None, None, None
-    
-    # Ensure model file is valid binary (not a Git LFS pointer)
-    if not ensure_model_file(model_path):
-        st.error("❌ Could not download model file. The file appears to be a Git LFS pointer.")
-        st.info("💡 **Solution:** Streamlit Cloud doesn't automatically download Git LFS files.")
-        st.info("Please ensure the model file is properly committed or use Hugging Face Hub for hosting.")
         return None, None, None
     
     try:
