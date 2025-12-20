@@ -8,7 +8,15 @@ import torch
 import torch.nn as nn
 from transformers import AutoTokenizer, AutoModel
 import os
+import subprocess
 import streamlit.components.v1 as components
+
+# Try to import requests for fallback download
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 # --- PAGE CONFIG ---
 st.set_page_config(
@@ -54,6 +62,70 @@ class SafetyClassifier(nn.Module):
         pooled_output = output.last_hidden_state[:, 0, :]
         return self.classifier(pooled_output)
 
+# --- HELPER: Download model file from GitHub or check if valid ---
+def ensure_model_file(file_path):
+    """Check if file is valid binary, or download from GitHub if it's a Git LFS pointer"""
+    if not os.path.exists(file_path):
+        return False
+    
+    # Check if file is a Git LFS pointer (starts with "version https://git-lfs.github.com")
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            first_line = f.readline().strip()
+            if first_line.startswith('version https://git-lfs.github.com'):
+                # This is a pointer file - try to download from GitHub
+                st.info("📥 Model file is a Git LFS pointer. Attempting to download...")
+                
+                # Try git lfs pull first
+                try:
+                    result = subprocess.run(
+                        ['git', 'lfs', 'pull', '--include', file_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        cwd=os.getcwd()
+                    )
+                    if result.returncode == 0 and os.path.exists(file_path):
+                        # Verify it's now binary
+                        with open(file_path, 'rb') as f_check:
+                            if not f_check.read(20).startswith(b'version https://git-lfs'):
+                                st.success("✅ Model file downloaded successfully!")
+                                return True
+                except Exception as e:
+                    st.warning(f"Git LFS pull failed: {str(e)}")
+                
+                # Fallback: Download from GitHub raw URL (if requests available)
+                if HAS_REQUESTS:
+                    st.info("Trying alternative download method...")
+                    try:
+                        # GitHub raw URL for the file
+                        github_url = "https://github.com/RohanSkaria/DeathNote/raw/main/best_model_state.bin"
+                        response = requests.get(github_url, stream=True, timeout=300)
+                        if response.status_code == 200:
+                            with open(file_path, 'wb') as f_dl:
+                                for chunk in response.iter_content(chunk_size=8192):
+                                    f_dl.write(chunk)
+                            st.success("✅ Model file downloaded from GitHub!")
+                            return True
+                    except Exception as e:
+                        st.warning(f"GitHub download failed: {str(e)}")
+                
+                return False
+    except (UnicodeDecodeError, Exception):
+        # File is binary, not a pointer - that's good!
+        pass
+    
+    # Verify file is actually binary (not still a pointer)
+    try:
+        with open(file_path, 'rb') as f:
+            first_bytes = f.read(50)
+            if first_bytes.startswith(b'version https://git-lfs'):
+                return False
+    except:
+        pass
+    
+    return True
+
 # --- LOAD MODEL (Cached for speed) ---
 @st.cache_resource
 def load_pipeline():
@@ -67,13 +139,26 @@ def load_pipeline():
     model_path = "best_model_state.bin"
     if not os.path.exists(model_path):
         model_path = "visualize-graph-v1/best_model_state.bin"
+    
     if not os.path.exists(model_path):
-        st.error(f"❌ Model file '{model_path}' not found. Please place it in the same folder.")
+        st.error(f"❌ Model file '{model_path}' not found.")
         st.info(f"Current directory: {os.getcwd()}")
-        st.info(f"Files in directory: {', '.join(os.listdir('.'))}")
+        try:
+            files = os.listdir('.')
+            st.info(f"Files in directory: {', '.join(files[:20])}")
+        except:
+            pass
+        return None, None, None
+    
+    # Ensure model file is valid binary (not a Git LFS pointer)
+    if not ensure_model_file(model_path):
+        st.error("❌ Could not download model file. The file appears to be a Git LFS pointer.")
+        st.info("💡 **Solution:** Streamlit Cloud doesn't automatically download Git LFS files.")
+        st.info("Please ensure the model file is properly committed or use Hugging Face Hub for hosting.")
         return None, None, None
     
     try:
+        
         checkpoint = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
@@ -83,6 +168,7 @@ def load_pipeline():
             best_mcc = 'N/A'
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
+        st.exception(e)  # Show full traceback for debugging
         return None, None, None
         
     model.eval()
