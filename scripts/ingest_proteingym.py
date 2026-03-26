@@ -161,14 +161,74 @@ def process_dms_file(dms_file_path, target_seq, dms_id, extract_positives=True):
     
     return None
 
+def process_hard_negatives(df, target_seq, dms_id, score_threshold=-1.0, min_len=50, max_len=1024):
+    """
+    Extract hard negatives: mutations with severe fitness drops (DMS_score < threshold).
+    These are high-confidence failures where the model would predict stability.
+    """
+    # Filter for severe fitness drops
+    hard_negs = df[df['DMS_score'] < score_threshold].copy()
+
+    if hard_negs.empty:
+        return None
+
+    # Get sequences
+    if 'mutated_sequence' in hard_negs.columns:
+        hard_negs['full_sequence'] = hard_negs['mutated_sequence']
+    elif 'mutant' in hard_negs.columns:
+        hard_negs['full_sequence'] = hard_negs['mutant'].apply(
+            lambda x: apply_mutation(target_seq, x) if pd.notna(x) else None
+        )
+    else:
+        return None
+
+    # Clean invalid sequences
+    hard_negs = hard_negs[hard_negs['full_sequence'].notna()]
+    hard_negs = hard_negs[hard_negs['full_sequence'].str.len() > 0]
+
+    if hard_negs.empty:
+        return None
+
+    # Length filter
+    seq_lens = hard_negs['full_sequence'].str.len()
+    hard_negs = hard_negs[(seq_lens >= min_len) & (seq_lens <= max_len)]
+
+    if hard_negs.empty:
+        return None
+
+    # Filter out ambiguous residues (X, B, Z, J, U, O)
+    ambiguous_pattern = r'[XBZJUO]'
+    hard_negs = hard_negs[~hard_negs['full_sequence'].str.contains(ambiguous_pattern, regex=True)]
+
+    if hard_negs.empty:
+        return None
+
+    # Standardize output
+    hard_negs['sequence_id'] = dms_id + "_" + hard_negs['mutant'].astype(str)
+    hard_negs['dms_score'] = hard_negs['DMS_score']
+    hard_negs['source'] = 'proteingym'
+    hard_negs['failure_type'] = 'fitness_drop'
+    hard_negs['label'] = 0
+
+    return hard_negs[['sequence_id', 'full_sequence', 'dms_score', 'source', 'failure_type', 'label']]
+
+
 def main():
     parser = argparse.ArgumentParser(description='Ingest Positive and Negative Data from ProteinGym')
-    parser.add_argument('--limit', type=int, default=None, 
+    parser.add_argument('--limit', type=int, default=None,
                        help='Number of DMS assays to process (None = process all)')
     parser.add_argument('--output_file', type=str, default='protein_data_batch_1.csv',
                        help='Output filename (default: protein_data_batch_1.csv)')
     parser.add_argument('--negatives-only', action='store_true',
                        help='Only extract negative samples (for backward compatibility)')
+    parser.add_argument('--hard-negatives', action='store_true',
+                       help='Extract hard negatives only (DMS_score < threshold)')
+    parser.add_argument('--score-threshold', type=float, default=-1.0,
+                       help='DMS score threshold for hard negatives (default: -1.0)')
+    parser.add_argument('--min-length', type=int, default=50,
+                       help='Minimum sequence length (default: 50)')
+    parser.add_argument('--max-length', type=int, default=1024,
+                       help='Maximum sequence length (default: 1024)')
     args = parser.parse_args()
     
     # Auto-detect paths assuming we are inside "DeathNote"
@@ -176,6 +236,7 @@ def main():
     
     # 1. Locate Data Folder (Prioritize local folder)
     possible_data_paths = [
+        os.path.join(base_dir, "archive-data", "DMS_ProteinGym_substitutions"),
         os.path.join(base_dir, "DMS_ProteinGym_substitutions"),
         os.path.expanduser("~/.cache/ProteinGym/DMS_ProteinGym_substitutions"),
         os.path.join(base_dir, "..", "ProteinGym", "DMS_ProteinGym_substitutions")
@@ -258,23 +319,48 @@ def main():
     processed_count = 0
     failed_count = 0
 
+    # Print mode info
+    if args.hard_negatives:
+        print(f"🎯 Mode: HARD NEGATIVES (score < {args.score_threshold}, length {args.min_length}-{args.max_length})")
+
     for idx, (_, row) in enumerate(targets.iterrows(), 1):
         dms_id = row['DMS_id']
         filename = row['DMS_filename']
         target_seq = row['target_seq']
-        
+
         full_path = os.path.join(dms_path, filename)
-        result = process_dms_file(full_path, target_seq, dms_id, extract_positives=not args.negatives_only)
-        
+
+        if args.hard_negatives:
+            # Hard negatives mode: stricter filtering
+            try:
+                df = pd.read_csv(full_path, low_memory=False)
+                df = df[pd.notna(df['DMS_score']) & np.isfinite(df['DMS_score'])].copy()
+                result = process_hard_negatives(
+                    df, target_seq, dms_id,
+                    score_threshold=args.score_threshold,
+                    min_len=args.min_length,
+                    max_len=args.max_length
+                )
+            except Exception as e:
+                print(f"   [{idx}/{len(targets)}] ❌ {dms_id}: Error - {e}")
+                failed_count += 1
+                continue
+        else:
+            # Standard mode
+            result = process_dms_file(full_path, target_seq, dms_id, extract_positives=not args.negatives_only)
+
         if result is not None and len(result) > 0:
             all_samples.append(result)
             processed_count += 1
-            neg_count = (result['label'] == 0).sum()
-            pos_count = (result['label'] == 1).sum()
-            print(f"   [{idx}/{len(targets)}] ✅ {dms_id}: {neg_count} neg, {pos_count} pos")
+            if args.hard_negatives:
+                print(f"   [{idx}/{len(targets)}] ✅ {dms_id}: {len(result)} hard negatives")
+            else:
+                neg_count = (result['label'] == 0).sum()
+                pos_count = (result['label'] == 1).sum()
+                print(f"   [{idx}/{len(targets)}] ✅ {dms_id}: {neg_count} neg, {pos_count} pos")
         else:
             failed_count += 1
-            print(f"   [{idx}/{len(targets)}] ❌ {dms_id}: Failed to process")
+            print(f"   [{idx}/{len(targets)}] ⚠️  {dms_id}: No samples matched criteria")
 
     # Combine with existing data (upsert-safe)
     if all_samples:
