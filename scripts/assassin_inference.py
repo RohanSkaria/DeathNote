@@ -26,8 +26,10 @@ if os.path.exists("/content/drive/MyDrive"):
     # Colab
     DEFAULT_ADAPTER_PATH = "/content/drive/MyDrive/DeathNote/saprot_assassin"
 else:
-    # Local - update this path after downloading model
-    DEFAULT_ADAPTER_PATH = os.path.expanduser("~/DeathNote/saprot_assassin")
+    # Local - check common locations
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(script_dir)
+    DEFAULT_ADAPTER_PATH = os.path.join(project_dir, "saprot_assassin")
 
 
 def to_saprot(sequence: str) -> str:
