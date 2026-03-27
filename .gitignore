@@ -45,3 +45,17 @@ DMS_ProteinGym_substitutions/
 # Visualization outputs (can regenerate)
 visualize-graph-v1/results_graph*.png
 
+
+# Model checkpoints (keep only final adapter)
+saprot_assassin/checkpoint-*/
+checkpoint-*/
+
+# Processed data (too large for git)
+data/processed/
+data/deathnote_data/
+data/cache/
+
+# IDE/local config
+*.code-workspace
+mcp_config.json
+demo_test.csv
