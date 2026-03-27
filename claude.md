@@ -1,5 +1,10 @@
 # ProteinGym Data Ingestion Pipeline - Analysis & Implementation Guide
 
+ # Comments about Review
+ most of the feedback and responses from from Gemini, it is in thinking mode and serving as a
+  background auditer of implmenetations, if its prepended by a quesiton its from gemini and can be treated
+  with more authority or reliability  
+
 ## Repository Structure Analysis
 
 ### ProteinGym Repository Layout
